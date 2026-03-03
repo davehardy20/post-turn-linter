@@ -104,9 +104,6 @@ async function loadConfig(directory: string): Promise<LinterConfig> {
 	}
 }
 
-/**
- * Get the appropriate linter for a given file path
- */
 function getLinterForFile(
 	filePath: string,
 	config: LinterConfig,
@@ -115,9 +112,6 @@ function getLinterForFile(
 	return config.linters[ext] || null;
 }
 
-/**
- * Detect if a tool execution modified a file
- */
 function detectModifiedFile(input: {
 	tool: string;
 	args?: { filePath?: string; path?: string };
@@ -138,9 +132,6 @@ function detectModifiedFile(input: {
 	return input.args?.filePath || input.args?.path || null;
 }
 
-/**
- * Group files by their associated linter
- */
 function groupFilesByLinter(
 	files: Set<string>,
 	config: LinterConfig,
@@ -158,6 +149,23 @@ function groupFilesByLinter(
 	}
 
 	return groups;
+}
+
+/**
+ * Safely cleanup a temp file, ignoring ENOENT errors
+ */
+async function cleanupTempFile(filePath: string): Promise<void> {
+	try {
+		await fs.unlink(filePath);
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+			return;
+		}
+		console.error(
+			`[PostTurnLinter] Failed to cleanup temp file ${filePath}:`,
+			error,
+		);
+	}
 }
 
 /**
@@ -193,13 +201,19 @@ async function runLinter(
 			const redirect = i === 0 ? ">" : ">>";
 			const linterPromise = $`${linter.command} ${linter.args} ${batch} ${redirect} ${outputFile} 2>&1 || true`;
 
-			// Apply timeout to each batch execution
-			const timeoutId = setTimeout(() => {}, timeoutMs);
+			const timeoutPromise = new Promise((_, reject) => {
+				setTimeout(() => {
+					reject(new Error(`Linter command timed out after ${timeoutMs}ms`));
+				}, timeoutMs);
+			});
 
 			try {
-				await linterPromise;
-			} finally {
-				clearTimeout(timeoutId);
+				await Promise.race([linterPromise, timeoutPromise]);
+			} catch (error) {
+				console.error(
+					`[PostTurnLinter] Error running ${linter.name} on batch ${Math.floor(i / BATCH_SIZE) + 1}:`,
+					error,
+				);
 			}
 		}
 
@@ -210,14 +224,7 @@ async function runLinter(
 			output = "";
 		}
 
-		try {
-			await fs.unlink(outputFile);
-		} catch (unlinkError) {
-			console.error(
-				`[PostTurnLinter] Failed to cleanup temp file ${outputFile}:`,
-				unlinkError,
-			);
-		}
+		await cleanupTempFile(outputFile);
 
 		return {
 			name: linter.name,
@@ -225,14 +232,7 @@ async function runLinter(
 			fileCount: existingFiles.length,
 		};
 	} catch (error) {
-		try {
-			await fs.unlink(outputFile);
-		} catch (unlinkError) {
-			console.error(
-				`[PostTurnLinter] Failed to cleanup temp file ${outputFile}:`,
-				unlinkError,
-			);
-		}
+		await cleanupTempFile(outputFile);
 		return {
 			name: linter.name,
 			output: `Error running ${linter.command}: ${error instanceof Error ? error.message : error}`,
@@ -267,10 +267,9 @@ export const PostTurnLinter: Plugin = async ({
 				if (modifiedFiles.size < MAX_MODIFIED_FILES) {
 					modifiedFiles.add(filePath);
 				} else if (modifiedFiles.size === MAX_MODIFIED_FILES) {
-					// Only warn once when we hit the limit
 					console.warn(
 						`[PostTurnLinter] Reached max modified files limit (${MAX_MODIFIED_FILES}). ` +
-							`Subsequent file changes will not be linted.`,
+						`Subsequent file changes will not be linted.`,
 					);
 				}
 			}
@@ -302,7 +301,6 @@ export const PostTurnLinter: Plugin = async ({
 					fileCount: number;
 				} | null)[] = new Array(linterEntries.length);
 
-				// Controlled parallelism
 				let nextIndex = 0;
 				const workers = new Array(
 					Math.min(maxParallel, linterEntries.length),
@@ -344,10 +342,10 @@ ${results.join("\n\n")}
 If there are errors, fix them. If something's unclear, ask.
 `.trim();
 
-					const sessionID = event.properties?.sessionID;
+					const sessionID = event.properties.sessionID;
 					if (sessionID) {
 						try {
-							await client.session.prompt({
+							await (client as OpenCodeClient).session.prompt({
 								path: { id: sessionID },
 								body: {
 									parts: [{ type: "text", text: message }],
@@ -362,14 +360,8 @@ If there are errors, fix them. If something's unclear, ask.
 					}
 				}
 			} catch (error) {
-				console.error(
-					"[PostTurnLinter] Error in event handler:",
-					error,
-				);
+				console.error("[PostTurnLinter] Error in event handler:", error);
 			}
 		},
 	};
 };
-
-// Default export for compatibility
-export default PostTurnLinter;
