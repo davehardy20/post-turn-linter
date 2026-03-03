@@ -1,0 +1,62 @@
+{
+  "name": "@davehardy20/post-turn-linter",
+  "version": "1.0.0",
+  "description": "An OpenCode plugin that automatically runs linters on modified files after each turn",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "linter.config.json.example",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "linter",
+    "code-quality",
+    "typescript",
+    "javascript",
+    "python",
+    "rust",
+    "c",
+    "cpp"
+  ],
+  "author": "Dave Hardy",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/davehardy20/post-turn-linter.git"
+  },
+  "bugs": {
+    "url": "https://github.com/davehardy20/post-turn-linter/issues"
+  },
+  "homepage": "https://github.com/davehardy20/post-turn-linter#readme",
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/node": "^20.0.0"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    }
+  }
+}

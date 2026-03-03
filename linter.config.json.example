@@ -1,0 +1,52 @@
+{
+  "cooldownMs": 15000,
+  "timeoutMs": 60000,
+  "maxParallel": 3,
+  "linters": {
+    ".ts": {
+      "command": "biome",
+      "args": ["check"],
+      "name": "Biome"
+    },
+    ".tsx": {
+      "command": "biome",
+      "args": ["check"],
+      "name": "Biome"
+    },
+    ".js": {
+      "command": "biome",
+      "args": ["check"],
+      "name": "Biome"
+    },
+    ".jsx": {
+      "command": "biome",
+      "args": ["check"],
+      "name": "Biome"
+    },
+    ".py": {
+      "command": "ruff",
+      "args": ["check"],
+      "name": "Ruff"
+    },
+    ".c": {
+      "command": "cppcheck",
+      "args": ["--enable=all", "--std=c11", "--quiet", "--template=gcc"],
+      "name": "cppcheck"
+    },
+    ".cpp": {
+      "command": "cppcheck",
+      "args": ["--enable=all", "--std=c++17", "--quiet", "--template=gcc"],
+      "name": "cppcheck"
+    },
+    ".rs": {
+      "command": "cargo",
+      "args": ["clippy", "--all-targets", "--all-features"],
+      "name": "Clippy"
+    },
+    ".go": {
+      "command": "golangci-lint",
+      "args": ["run"],
+      "name": "golangci-lint"
+    }
+  }
+}
