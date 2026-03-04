@@ -6,7 +6,7 @@ An [OpenCode](https://github.com/opencode-ai/opencode) plugin that automatically
 
 - **Automatic Linting**: Watches file modifications and runs appropriate linters when the session becomes idle
 - **Bash Command Detection**: Detects file modifications from bash commands (`cp`, `mv`, `echo`, `sed`, etc.)
-- **Multi-Language Support**: Built-in support for TypeScript, JavaScript, Python, C/C++, Rust, Terraform, Shell scripts, and more
+- **Multi-Language Support**: Built-in support for TypeScript, JavaScript, Python, C/C++, Rust, Terraform, Shell scripts, Docker, and more
 - **Configurable**: Customize which linters to use, timeouts, and parallel execution limits
 - **Batch Processing**: Efficiently processes files in batches to handle large changesets
 - **Parallel Execution**: Runs multiple linters concurrently for faster feedback
@@ -32,6 +32,7 @@ This plugin requires the following tools to be installed on your system, dependi
 | Terraform | [tflint](https://github.com/terraform-linters/tflint) | `brew install tflint` |
 | Go | [golangci-lint](https://golangci-lint.run/) | `brew install golangci-lint` |
 | Shell (sh, bash, zsh, ksh) | [ShellCheck](https://www.shellcheck.net/) | `brew install shellcheck` |
+| Docker | [Hadolint](https://github.com/hadolint/hadolint) | `brew install hadolint` |
 
 You only need to install the linters for languages you actually use. The plugin will skip languages without available linters.
 
@@ -104,6 +105,11 @@ Create a configuration file at `.opencode/linter.config.json` in your project ro
       "command": "cargo",
       "args": ["clippy", "--all-targets", "--all-features"],
       "name": "Clippy"
+    },
+    "Dockerfile": {
+      "command": "hadolint",
+      "args": [],
+      "name": "Hadolint"
     }
   }
 }
@@ -119,7 +125,7 @@ Create a configuration file at `.opencode/linter.config.json` in your project ro
 
 ### Linter Configuration
 
-Each entry in the `linters` object maps a file extension to a linter definition:
+Each entry in the `linters` object maps a file extension (or filename for special files like `Dockerfile`) to a linter definition:
 
 ```typescript
 {
@@ -143,6 +149,7 @@ The plugin includes sensible defaults for common file types:
 | .tf, .tfvars | tflint | `tflint` |
 | .rs | Clippy | `cargo clippy --all-targets --all-features` |
 | .sh, .bash, .zsh, .ksh | ShellCheck | `shellcheck` |
+| Dockerfile | Hadolint | `hadolint` |
 
 ## Extending the Tool
 
@@ -167,6 +174,11 @@ You can add support for any language by extending the `linters` configuration:
       "command": "rubocop",
       "args": ["--format", "simple"],
       "name": "RuboCop"
+    },
+    "Dockerfile": {
+      "command": "hadolint",
+      "args": ["--no-color"],
+      "name": "Hadolint"
     }
   }
 }
