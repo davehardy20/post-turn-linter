@@ -75,9 +75,7 @@ export interface PluginHooks {
 /**
  * Plugin function signature
  */
-export type Plugin = (
-	context: PluginContext,
-) => Promise<PluginHooks> | PluginHooks;
+export type Plugin = (context: PluginContext) => Promise<PluginHooks> | PluginHooks;
 
 /**
  * Linter command definition

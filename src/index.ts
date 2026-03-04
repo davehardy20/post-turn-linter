@@ -1,11 +1,6 @@
 import { promises as fs } from "node:fs";
 import { extname, join } from "node:path";
-import type {
-	LinterConfig,
-	LinterDefinition,
-	Plugin,
-	PluginContext,
-} from "./types.js";
+import type { LinterConfig, LinterDefinition, Plugin, PluginContext } from "./types.js";
 
 // Re-export types for consumers
 export * from "./types.js";
@@ -79,6 +74,12 @@ const DEFAULT_CONFIG: LinterConfig = {
 			args: [],
 			name: "ShellCheck",
 		},
+
+		Dockerfile: {
+			command: "hadolint",
+			args: [],
+			name: "Hadolint",
+		},
 	},
 };
 
@@ -107,10 +108,7 @@ async function loadConfig(directory: string): Promise<LinterConfig> {
 		if (error instanceof Error && "code" in error && error.code === "ENOENT") {
 			return DEFAULT_CONFIG;
 		}
-		console.error(
-			`[PostTurnLinter] Failed to load config from ${configPath}:`,
-			error,
-		);
+		console.error(`[PostTurnLinter] Failed to load config from ${configPath}:`, error);
 		return DEFAULT_CONFIG;
 	}
 }
@@ -118,10 +116,7 @@ async function loadConfig(directory: string): Promise<LinterConfig> {
 /**
  * Get the appropriate linter for a given file path
  */
-function getLinterForFile(
-	filePath: string,
-	config: LinterConfig,
-): LinterDefinition | null {
+function getLinterForFile(filePath: string, config: LinterConfig): LinterDefinition | null {
 	const ext = extname(filePath).toLowerCase();
 	return config.linters[ext] || null;
 }
@@ -202,10 +197,7 @@ function detectModifiedFile(input: {
 /**
  * Group files by their associated linter
  */
-function groupFilesByLinter(
-	files: Set<string>,
-	config: LinterConfig,
-): Map<string, string[]> {
+function groupFilesByLinter(files: Set<string>, config: LinterConfig): Map<string, string[]> {
 	const groups = new Map<string, string[]>();
 
 	for (const filePath of files) {
@@ -268,9 +260,7 @@ async function runLinter(
 					timeoutPromise,
 				]);
 
-				const combinedOutput = [batchOutput, batchError]
-					.filter(Boolean)
-					.join("\n");
+				const combinedOutput = [batchOutput, batchError].filter(Boolean).join("\n");
 				if (combinedOutput) {
 					outputs.push(combinedOutput);
 				}
