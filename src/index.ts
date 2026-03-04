@@ -1,12 +1,8 @@
-import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
-import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import type {
-	BunShell,
 	LinterConfig,
 	LinterDefinition,
-	OpenCodeClient,
 	Plugin,
 	PluginContext,
 } from "./types.js";
@@ -15,7 +11,6 @@ import type {
 export * from "./types.js";
 
 const DEFAULT_CONFIG: LinterConfig = {
-	cooldownMs: 15_000,
 	timeoutMs: 60_000,
 	maxParallel: 3,
 	linters: {
@@ -63,6 +58,27 @@ const DEFAULT_CONFIG: LinterConfig = {
 			args: ["clippy", "--all-targets", "--all-features"],
 			name: "Clippy",
 		},
+
+		".sh": {
+			command: "/opt/homebrew/bin/shellcheck",
+			args: [],
+			name: "ShellCheck",
+		},
+		".bash": {
+			command: "/opt/homebrew/bin/shellcheck",
+			args: [],
+			name: "ShellCheck",
+		},
+		".zsh": {
+			command: "/opt/homebrew/bin/shellcheck",
+			args: [],
+			name: "ShellCheck",
+		},
+		".ksh": {
+			command: "/opt/homebrew/bin/shellcheck",
+			args: [],
+			name: "ShellCheck",
+		},
 	},
 };
 
@@ -80,7 +96,6 @@ async function loadConfig(directory: string): Promise<LinterConfig> {
 		const configData = await fs.readFile(configPath, "utf8");
 		const userConfig = JSON.parse(configData) as Partial<LinterConfig>;
 		return {
-			cooldownMs: userConfig.cooldownMs ?? DEFAULT_CONFIG.cooldownMs,
 			timeoutMs: userConfig.timeoutMs ?? DEFAULT_CONFIG.timeoutMs,
 			maxParallel: userConfig.maxParallel ?? DEFAULT_CONFIG.maxParallel,
 			linters: {
@@ -89,11 +104,7 @@ async function loadConfig(directory: string): Promise<LinterConfig> {
 			},
 		};
 	} catch (error) {
-		if (
-			error instanceof Error &&
-			"code" in error &&
-			error.code === "ENOENT"
-		) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") {
 			return DEFAULT_CONFIG;
 		}
 		console.error(
@@ -104,6 +115,9 @@ async function loadConfig(directory: string): Promise<LinterConfig> {
 	}
 }
 
+/**
+ * Get the appropriate linter for a given file path
+ */
 function getLinterForFile(
 	filePath: string,
 	config: LinterConfig,
@@ -112,9 +126,13 @@ function getLinterForFile(
 	return config.linters[ext] || null;
 }
 
+/**
+ * Detect if a tool execution modified a file
+ * Handles both direct file edits and bash commands that modify files
+ */
 function detectModifiedFile(input: {
 	tool: string;
-	args?: { filePath?: string; path?: string };
+	args?: { filePath?: string; path?: string; command?: string };
 }): string | null {
 	const editTools = [
 		"write",
@@ -127,11 +145,63 @@ function detectModifiedFile(input: {
 		"create_text_file",
 	];
 
+	// Handle bash commands that modify files
+	if (input.tool === "bash" && input.args?.command) {
+		const cmd = input.args.command;
+
+		// cp [options] source dest - capture destination file(s)
+		// Handles: cp file1 file2, cp -r dir1 dir2, cp file1 file2 file3 dest/
+		const cpMatch = cmd.match(/cp\s+(?:-[a-zA-Z]+\s+)*(.*)$/);
+		if (cpMatch) {
+			const argsStr = cpMatch[1];
+			// Split by whitespace but respect quotes
+			const args = argsStr.match(/[^\s"']+|"([^"]*)"|'([^']*)'/g) || [];
+			// Remove flags and clean up quotes
+			const cleanArgs = args
+				.map((arg) => arg.replace(/^["']|["']$/g, ""))
+				.filter((arg) => !arg.startsWith("-") && arg.length > 0);
+			// Last argument is the destination
+			if (cleanArgs.length >= 2) {
+				const dest = cleanArgs[cleanArgs.length - 1];
+				return dest;
+			}
+		}
+
+		// mv [options] source dest - capture destination
+		const mvMatch = cmd.match(/mv\s+(?:-[a-zA-Z]+\s+)*(\S+)\s+(\S+)$/);
+		if (mvMatch) {
+			return mvMatch[2];
+		}
+
+		// echo "content" > file - capture file after >
+		const echoRedirectMatch = cmd.match(/echo\s+.*>\s*(\S+)$/);
+		if (echoRedirectMatch) {
+			return echoRedirectMatch[1];
+		}
+
+		// cat > file or tee file
+		const catRedirectMatch = cmd.match(/(?:cat|tee)\s+.*>\s*(\S+)$/);
+		if (catRedirectMatch) {
+			return catRedirectMatch[1];
+		}
+
+		// sed -i (in-place edit)
+		const sedMatch = cmd.match(
+			/sed\s+(?:-[a-zA-Z]*i[a-zA-Z]*\s+|-i\s+(?:'[^']*'|"[^"]*")\s+)*(\S+)$/,
+		);
+		if (sedMatch) {
+			return sedMatch[1];
+		}
+	}
+
 	if (!editTools.includes(input.tool)) return null;
 
 	return input.args?.filePath || input.args?.path || null;
 }
 
+/**
+ * Group files by their associated linter
+ */
 function groupFilesByLinter(
 	files: Set<string>,
 	config: LinterConfig,
@@ -152,27 +222,9 @@ function groupFilesByLinter(
 }
 
 /**
- * Safely cleanup a temp file, ignoring ENOENT errors
- */
-async function cleanupTempFile(filePath: string): Promise<void> {
-	try {
-		await fs.unlink(filePath);
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-			return;
-		}
-		console.error(
-			`[PostTurnLinter] Failed to cleanup temp file ${filePath}:`,
-			error,
-		);
-	}
-}
-
-/**
- * Run a linter on a batch of files
+ * Run a linter on a batch of files using native Bun.spawn
  */
 async function runLinter(
-	$: BunShell,
 	filePaths: string[],
 	linter: LinterDefinition,
 	timeoutMs: number = 60_000,
@@ -189,26 +241,41 @@ async function runLinter(
 
 	if (existingFiles.length === 0) return null;
 
-	const outputFile = join(
-		tmpdir(),
-		`opencode-lint-${linter.command}-${randomUUID()}.log`,
-	);
-
 	try {
+		const outputs: string[] = [];
+
 		for (let i = 0; i < existingFiles.length; i += BATCH_SIZE) {
 			const batch = existingFiles.slice(i, i + BATCH_SIZE);
+			const cmdParts = [linter.command, ...linter.args, ...batch];
 
-			const redirect = i === 0 ? ">" : ">>";
-			const linterPromise = $`${linter.command} ${linter.args} ${batch} ${redirect} ${outputFile} 2>&1 || true`;
-
-			const timeoutPromise = new Promise((_, reject) => {
+			const timeoutPromise = new Promise<string>((_, reject) => {
 				setTimeout(() => {
 					reject(new Error(`Linter command timed out after ${timeoutMs}ms`));
 				}, timeoutMs);
 			});
 
 			try {
-				await Promise.race([linterPromise, timeoutPromise]);
+				const proc = Bun.spawn(cmdParts, {
+					stdout: "pipe",
+					stderr: "pipe",
+				});
+
+				const batchOutputPromise = new Response(proc.stdout).text();
+				const batchErrorPromise = new Response(proc.stderr).text();
+
+				const [batchOutput, batchError] = await Promise.race([
+					Promise.all([batchOutputPromise, batchErrorPromise]),
+					timeoutPromise,
+				]);
+
+				const combinedOutput = [batchOutput, batchError]
+					.filter(Boolean)
+					.join("\n");
+				if (combinedOutput) {
+					outputs.push(combinedOutput);
+				}
+
+				await proc.exited;
 			} catch (error) {
 				console.error(
 					`[PostTurnLinter] Error running ${linter.name} on batch ${Math.floor(i / BATCH_SIZE) + 1}:`,
@@ -217,22 +284,12 @@ async function runLinter(
 			}
 		}
 
-		let output: string;
-		try {
-			output = await fs.readFile(outputFile, "utf8");
-		} catch {
-			output = "";
-		}
-
-		await cleanupTempFile(outputFile);
-
 		return {
 			name: linter.name,
-			output: output.trim(),
+			output: outputs.join("\n").trim(),
 			fileCount: existingFiles.length,
 		};
 	} catch (error) {
-		await cleanupTempFile(outputFile);
 		return {
 			name: linter.name,
 			output: `Error running ${linter.command}: ${error instanceof Error ? error.message : error}`,
@@ -247,18 +304,17 @@ async function runLinter(
  */
 export const PostTurnLinter: Plugin = async ({
 	client,
-	$,
+	_$,
 	directory,
 	worktree,
 }: PluginContext) => {
 	const projectDir = worktree || directory;
 	const config = await loadConfig(projectDir);
-	const cooldownMs = config.cooldownMs ?? DEFAULT_CONFIG.cooldownMs;
 	const timeoutMs = config.timeoutMs ?? DEFAULT_CONFIG.timeoutMs;
 	const maxParallel = config.maxParallel ?? DEFAULT_CONFIG.maxParallel ?? 3;
 
 	const modifiedFiles = new Set<string>();
-	let lastRunAt = 0;
+	let hasRun = false;
 
 	return {
 		"tool.execute.after": async (input) => {
@@ -267,9 +323,10 @@ export const PostTurnLinter: Plugin = async ({
 				if (modifiedFiles.size < MAX_MODIFIED_FILES) {
 					modifiedFiles.add(filePath);
 				} else if (modifiedFiles.size === MAX_MODIFIED_FILES) {
+					// Only warn once when we hit the limit
 					console.warn(
 						`[PostTurnLinter] Reached max modified files limit (${MAX_MODIFIED_FILES}). ` +
-						`Subsequent file changes will not be linted.`,
+							`Subsequent file changes will not be linted.`,
 					);
 				}
 			}
@@ -278,21 +335,21 @@ export const PostTurnLinter: Plugin = async ({
 		event: async ({ event }) => {
 			try {
 				if (event.type !== "session.idle") return;
+				if (hasRun) return;
 				if (modifiedFiles.size === 0) return;
 
-				const now = Date.now();
-				if (now - lastRunAt < cooldownMs) return;
-				lastRunAt = now;
+				hasRun = true;
 
-				const filesByLinter = groupFilesByLinter(modifiedFiles, config);
+				// Copy files to process and clear the set atomically
+				const filesToProcess = new Set(modifiedFiles);
+				modifiedFiles.clear();
 
-				for (const filePaths of filesByLinter.values()) {
-					for (const filePath of filePaths) {
-						modifiedFiles.delete(filePath);
-					}
+				const filesByLinter = groupFilesByLinter(filesToProcess, config);
+
+				if (filesByLinter.size === 0) {
+					hasRun = false;
+					return;
 				}
-
-				if (filesByLinter.size === 0) return;
 
 				const linterEntries = Array.from(filesByLinter.entries());
 				const linterResults: ({
@@ -301,10 +358,9 @@ export const PostTurnLinter: Plugin = async ({
 					fileCount: number;
 				} | null)[] = new Array(linterEntries.length);
 
+				// Controlled parallelism
 				let nextIndex = 0;
-				const workers = new Array(
-					Math.min(maxParallel, linterEntries.length),
-				)
+				const workers = new Array(Math.min(maxParallel, linterEntries.length))
 					.fill(null)
 					.map(async () => {
 						while (nextIndex < linterEntries.length) {
@@ -313,7 +369,6 @@ export const PostTurnLinter: Plugin = async ({
 							const linter = getLinterForFile(filePaths[0], config);
 							if (linter) {
 								linterResults[currentIndex] = await runLinter(
-									$,
 									filePaths,
 									linter,
 									timeoutMs,
@@ -342,10 +397,10 @@ ${results.join("\n\n")}
 If there are errors, fix them. If something's unclear, ask.
 `.trim();
 
-					const sessionID = event.properties.sessionID;
+					const sessionID = event.properties?.sessionID;
 					if (sessionID) {
 						try {
-							await (client as OpenCodeClient).session.prompt({
+							await client.session.prompt({
 								path: { id: sessionID },
 								body: {
 									parts: [{ type: "text", text: message }],
@@ -361,7 +416,13 @@ If there are errors, fix them. If something's unclear, ask.
 				}
 			} catch (error) {
 				console.error("[PostTurnLinter] Error in event handler:", error);
+			} finally {
+				// Always reset the flag so we can run again on next idle
+				hasRun = false;
 			}
 		},
 	};
 };
+
+// Default export for compatibility
+export default PostTurnLinter;

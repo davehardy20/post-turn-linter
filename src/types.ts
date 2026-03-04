@@ -4,18 +4,6 @@
  */
 
 /**
- * Bun shell template tag function for executing shell commands
- */
-export type BunShell = (
-	template: TemplateStringsArray,
-	...values: unknown[]
-) => Promise<{
-	stdout: string;
-	stderr: string;
-	exitCode: number;
-}>;
-
-/**
  * OpenCode client interface for session interactions
  */
 export interface OpenCodeClient {
@@ -33,8 +21,8 @@ export interface OpenCodeClient {
  * Plugin context provided by OpenCode
  */
 export interface PluginContext {
-	/** Bun shell for executing commands */
-	$: BunShell;
+	/** Bun shell for executing commands (unused - we use Bun.spawn directly) */
+	_$: unknown;
 	/** OpenCode client for session interactions */
 	client: OpenCodeClient;
 	/** Current working directory */
@@ -53,6 +41,7 @@ export interface ToolExecuteInput {
 	args?: {
 		filePath?: string;
 		path?: string;
+		command?: string;
 		[key: string]: unknown;
 	};
 }
@@ -86,7 +75,9 @@ export interface PluginHooks {
 /**
  * Plugin function signature
  */
-export type Plugin = (context: PluginContext) => Promise<PluginHooks> | PluginHooks;
+export type Plugin = (
+	context: PluginContext,
+) => Promise<PluginHooks> | PluginHooks;
 
 /**
  * Linter command definition
@@ -106,8 +97,6 @@ export interface LinterDefinition {
 export interface LinterConfig {
 	/** Map of file extensions to linter definitions */
 	linters: Record<string, LinterDefinition>;
-	/** Cooldown period in milliseconds (default: 15000) */
-	cooldownMs?: number;
 	/** Timeout for linter execution in milliseconds (default: 60000) */
 	timeoutMs?: number;
 	/** Maximum number of parallel linter processes (default: 3) */

@@ -5,8 +5,9 @@ An [OpenCode](https://github.com/opencode-ai/opencode) plugin that automatically
 ## Features
 
 - **Automatic Linting**: Watches file modifications and runs appropriate linters when the session becomes idle
-- **Multi-Language Support**: Built-in support for TypeScript, JavaScript, Python, C/C++, Rust, Terraform, and more
-- **Configurable**: Customize which linters to use, cooldown periods, timeouts, and parallel execution limits
+- **Bash Command Detection**: Detects file modifications from bash commands (`cp`, `mv`, `echo`, `sed`, etc.)
+- **Multi-Language Support**: Built-in support for TypeScript, JavaScript, Python, C/C++, Rust, Terraform, Shell scripts, and more
+- **Configurable**: Customize which linters to use, timeouts, and parallel execution limits
 - **Batch Processing**: Efficiently processes files in batches to handle large changesets
 - **Parallel Execution**: Runs multiple linters concurrently for faster feedback
 - **Smart Grouping**: Groups files by linter type to minimize redundant execution
@@ -30,6 +31,7 @@ This plugin requires the following tools to be installed on your system, dependi
 | Rust | [Clippy](https://github.com/rust-lang/rust-clippy) | Included with Rust toolchain |
 | Terraform | [tflint](https://github.com/terraform-linters/tflint) | `brew install tflint` |
 | Go | [golangci-lint](https://golangci-lint.run/) | `brew install golangci-lint` |
+| Shell (sh, bash, zsh, ksh) | [ShellCheck](https://www.shellcheck.net/) | `brew install shellcheck` |
 
 You only need to install the linters for languages you actually use. The plugin will skip languages without available linters.
 
@@ -80,7 +82,6 @@ Create a configuration file at `.opencode/linter.config.json` in your project ro
 
 ```json
 {
-  "cooldownMs": 15000,
   "timeoutMs": 60000,
   "maxParallel": 3,
   "linters": {
@@ -112,7 +113,6 @@ Create a configuration file at `.opencode/linter.config.json` in your project ro
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `cooldownMs` | number | 15000 | Time to wait after last modification before running linters (milliseconds) |
 | `timeoutMs` | number | 60000 | Maximum time to wait for a linter to complete (milliseconds) |
 | `maxParallel` | number | 3 | Maximum number of linters to run in parallel |
 | `linters` | object | See below | Map of file extensions to linter configurations |
@@ -142,6 +142,7 @@ The plugin includes sensible defaults for common file types:
 | .h | cppcheck | `cppcheck --enable=all` |
 | .tf, .tfvars | tflint | `tflint` |
 | .rs | Clippy | `cargo clippy --all-targets --all-features` |
+| .sh, .bash, .zsh, .ksh | ShellCheck | `shellcheck` |
 
 ## Extending the Tool
 
@@ -197,13 +198,13 @@ The plugin implements two OpenCode plugin hooks:
 Called after each tool execution. Detects file modifications and queues them for linting.
 
 #### `event`
-Listens for `session.idle` events. When the session becomes idle and enough time has passed since the last modification, runs the queued linters.
+Listens for `session.idle` events. When the session becomes idle, runs the queued linters immediately.
 
 ## How It Works
 
-1. **Detection**: After each tool execution, the plugin checks if a file was modified (created, edited, or replaced)
+1. **Detection**: After each tool execution, the plugin checks if a file was modified (created, edited, replaced) or if a bash command modified files (`cp`, `mv`, `echo`, `sed`, etc.)
 2. **Queueing**: Modified files are added to an internal queue (up to 1000 files maximum)
-3. **Idle Trigger**: When the OpenCode session becomes idle, the plugin checks if enough time has passed since the last modification (cooldown period)
+3. **Idle Trigger**: When the OpenCode session becomes idle, the plugin runs the queued linters immediately
 4. **Grouping**: Files are grouped by their associated linter to minimize redundant execution
 5. **Execution**: Linters run in parallel (up to `maxParallel` concurrent) with timeout protection
 6. **Batching**: Large file sets are processed in batches of 50 to avoid command-line length limits
@@ -244,16 +245,6 @@ Increase the `timeoutMs` in your configuration:
 ```json
 {
   "timeoutMs": 120000
-}
-```
-
-### Too Much/Little Linting
-
-Adjust the `cooldownMs` to control how long the plugin waits after modifications:
-
-```json
-{
-  "cooldownMs": 5000   // 5 seconds for more frequent linting
 }
 ```
 
